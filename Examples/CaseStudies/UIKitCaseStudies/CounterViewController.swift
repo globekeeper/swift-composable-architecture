@@ -3,7 +3,8 @@ import ComposableArchitecture
 import SwiftUI
 import UIKit
 
-struct CounterState: Equatable {
+struct CounterState: Equatable, Identifiable {
+  let id = UUID()
   var count = 0
 }
 
@@ -27,7 +28,7 @@ let counterReducer = Reducer<CounterState, CounterAction, CounterEnvironment> { 
 
 final class CounterViewController: UIViewController {
   let viewStore: ViewStore<CounterState, CounterAction>
-  var cancellables: Set<AnyCancellable> = []
+  private var cancellables: Set<AnyCancellable> = []
 
   init(store: Store<CounterState, CounterAction>) {
     self.viewStore = ViewStore(store)

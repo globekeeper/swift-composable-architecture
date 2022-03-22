@@ -199,6 +199,18 @@ final class EffectTests: XCTestCase {
     self.wait(for: [expectation], timeout: 0)
   }
 
+  func testDoubleCancelInFlight() {
+    var result: Int?
+
+    _ = Just(42)
+      .eraseToEffect()
+      .cancellable(id: "id", cancelInFlight: true)
+      .cancellable(id: "id", cancelInFlight: true)
+      .sink { result = $0 }
+
+    XCTAssertEqual(result, 42)
+  }
+
   #if compiler(>=5.4)
     func testFailing() {
       let effect = Effect<Never, Never>.failing("failing")
@@ -210,10 +222,8 @@ final class EffectTests: XCTestCase {
     }
   #endif
 
-  #if compiler(>=5.5) && canImport(_Concurrency)
+  #if canImport(_Concurrency) && compiler(>=5.5.2)
     func testTask() {
-      guard #available(iOS 15, macOS 12, tvOS 15, watchOS 8, *) else { return }
-
       let expectation = self.expectation(description: "Complete")
       var result: Int?
       Effect<Int, Never>.task {
@@ -227,8 +237,6 @@ final class EffectTests: XCTestCase {
     }
 
     func testThrowingTask() {
-      guard #available(iOS 15, macOS 12, tvOS 15, watchOS 8, *) else { return }
-
       let expectation = self.expectation(description: "Complete")
       struct MyError: Error {}
       var result: Error?
@@ -253,29 +261,22 @@ final class EffectTests: XCTestCase {
     }
 
     func testCancellingTask() {
-      guard #available(iOS 15, macOS 12, tvOS 15, watchOS 8, *) else { return }
-
       @Sendable func work() async throws -> Int {
-        var task: Task<Int, Error>!
-        task = Task {
-          await Task.sleep(NSEC_PER_MSEC)
-          try Task.checkCancellation()
-          return 42
-        }
-        task.cancel()
-        return try await task.value
+        try await Task.sleep(nanoseconds: NSEC_PER_MSEC)
+        XCTFail()
+        return 42
       }
 
-      let expectation = self.expectation(description: "Complete")
-      Effect<Int, Error>.task {
-        try await work()
-      }
-      .sink(
-        receiveCompletion: { _ in expectation.fulfill() },
-        receiveValue: { _ in XCTFail() }
-      )
-      .store(in: &self.cancellables)
-      self.wait(for: [expectation], timeout: 1)
+      Effect<Int, Error>.task { try await work() }
+        .sink(
+          receiveCompletion: { _ in XCTFail() },
+          receiveValue: { _ in XCTFail() }
+        )
+        .store(in: &self.cancellables)
+
+      self.cancellables = []
+
+      _ = XCTWaiter.wait(for: [.init()], timeout: 1.1)
     }
   #endif
 }

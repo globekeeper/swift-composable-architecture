@@ -40,9 +40,9 @@ struct VoiceMemoEnvironment {
   var mainRunLoop: AnySchedulerOf<RunLoop>
 }
 
-let voiceMemoReducer = Reducer<VoiceMemo, VoiceMemoAction, VoiceMemoEnvironment> {
-  memo, action, environment in
-  struct PlayerId: Hashable {}
+let voiceMemoReducer = Reducer<
+  VoiceMemo, VoiceMemoAction, VoiceMemoEnvironment
+> { memo, action, environment in
   struct TimerId: Hashable {}
 
   switch action {
@@ -52,10 +52,7 @@ let voiceMemoReducer = Reducer<VoiceMemo, VoiceMemoAction, VoiceMemoEnvironment>
 
   case .delete:
     return .merge(
-      environment.audioPlayerClient
-        .stop(PlayerId())
-        .fireAndForget(),
-      .cancel(id: PlayerId()),
+      environment.audioPlayerClient.stop().fireAndForget(),
       .cancel(id: TimerId())
     )
 
@@ -63,24 +60,23 @@ let voiceMemoReducer = Reducer<VoiceMemo, VoiceMemoAction, VoiceMemoEnvironment>
     switch memo.mode {
     case .notPlaying:
       memo.mode = .playing(progress: 0)
+
       let start = environment.mainRunLoop.now
       return .merge(
         Effect.timer(id: TimerId(), every: 0.5, on: environment.mainRunLoop)
           .map { .timerUpdated($0.date.timeIntervalSince1970 - start.date.timeIntervalSince1970) },
 
         environment.audioPlayerClient
-          .play(PlayerId(), memo.url)
+          .play(memo.url)
           .catchToEffect(VoiceMemoAction.audioPlayerClient)
-          .cancellable(id: PlayerId())
       )
 
     case .playing:
       memo.mode = .notPlaying
+
       return .concatenate(
         .cancel(id: TimerId()),
-        environment.audioPlayerClient
-          .stop(PlayerId())
-          .fireAndForget()
+        environment.audioPlayerClient.stop().fireAndForget()
       )
     }
 
@@ -100,57 +96,46 @@ let voiceMemoReducer = Reducer<VoiceMemo, VoiceMemoAction, VoiceMemoEnvironment>
 }
 
 struct VoiceMemoView: View {
-  // NB: We are using an explicit `ObservedObject` for the view store here instead of
-  // `WithViewStore` due to a SwiftUI bug where `GeometryReader`s inside `WithViewStore` will
-  // not properly update.
-  //
-  // Feedback filed: https://gist.github.com/mbrandonw/cc5da3d487bcf7c4f21c27019a440d18
-  @ObservedObject var viewStore: ViewStore<VoiceMemo, VoiceMemoAction>
-
-  init(store: Store<VoiceMemo, VoiceMemoAction>) {
-    self.viewStore = ViewStore(store)
-  }
+  let store: Store<VoiceMemo, VoiceMemoAction>
 
   var body: some View {
-    GeometryReader { proxy in
-      ZStack(alignment: .leading) {
-        if self.viewStore.mode.isPlaying {
-          Rectangle()
-            .foregroundColor(Color(.systemGray5))
-            .frame(width: proxy.size.width * CGFloat(self.viewStore.mode.progress ?? 0))
-            .animation(.linear(duration: 0.5))
+    WithViewStore(store) { viewStore in
+      let currentTime =
+        viewStore.mode.progress.map { $0 * viewStore.duration } ?? viewStore.duration
+      HStack {
+        TextField(
+          "Untitled, \(viewStore.date.formatted(date: .numeric, time: .shortened))",
+          text: viewStore.binding(
+            get: \.title, send: VoiceMemoAction.titleTextFieldChanged)
+        )
+
+        Spacer()
+
+        dateComponentsFormatter.string(from: currentTime).map {
+          Text($0)
+            .font(.footnote.monospacedDigit())
+            .foregroundColor(Color(.systemGray))
         }
 
-        HStack {
-          TextField(
-            "Untitled, \(dateFormatter.string(from: self.viewStore.date))",
-            text: self.viewStore.binding(
-              get: \.title, send: VoiceMemoAction.titleTextFieldChanged)
-          )
-
-          Spacer()
-
-          dateComponentsFormatter.string(from: self.currentTime).map {
-            Text($0)
-              .font(Font.footnote.monospacedDigit())
-              .foregroundColor(Color(.systemGray))
-          }
-
-          Button(action: { self.viewStore.send(.playButtonTapped) }) {
-            Image(systemName: self.viewStore.mode.isPlaying ? "stop.circle" : "play.circle")
-              .font(Font.system(size: 22))
-          }
+        Button(action: { viewStore.send(.playButtonTapped) }) {
+          Image(systemName: viewStore.mode.isPlaying ? "stop.circle" : "play.circle")
+            .font(.system(size: 22))
         }
-        .frame(maxHeight: .infinity, alignment: .center)
-        .padding([.leading, .trailing])
       }
+      .buttonStyle(.borderless)
+      .frame(maxHeight: .infinity, alignment: .center)
+      .padding(.horizontal)
+      .listRowBackground(viewStore.mode.isPlaying ? Color(.systemGray6) : .clear)
+      .listRowInsets(EdgeInsets())
+      .background(
+        Color(.systemGray5)
+          .frame(maxWidth: viewStore.mode.isPlaying ? .infinity : 0)
+          .animation(
+            viewStore.mode.isPlaying ? .linear(duration: viewStore.duration) : nil,
+            value: viewStore.mode.isPlaying
+          ),
+        alignment: .leading
+      )
     }
-    .buttonStyle(BorderlessButtonStyle())
-    .listRowBackground(self.viewStore.mode.isPlaying ? Color(.systemGray6) : .clear)
-    .listRowInsets(EdgeInsets())
-  }
-
-  var currentTime: TimeInterval {
-    self.viewStore.mode.progress.map { $0 * self.viewStore.duration } ?? self.viewStore.duration
   }
 }

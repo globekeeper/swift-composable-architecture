@@ -286,4 +286,50 @@ final class EffectCancellationTests: XCTestCase {
     scheduler.advance(by: 1)
     XCTAssertNoDifference(expectedOutput, [])
   }
+
+  func testNestedMergeCancellation() {
+    let effect = Effect<Int, Never>.merge(
+      (1...2).publisher
+        .eraseToEffect()
+        .cancellable(id: 1)
+    )
+    .cancellable(id: 2)
+
+    var output: [Int] = []
+    effect
+      .sink { output.append($0) }
+      .store(in: &cancellables)
+
+    XCTAssertEqual(output, [1, 2])
+  }
+
+  func testMultipleCancellations() {
+    let scheduler = DispatchQueue.test
+    var values: [Int] = []
+
+    struct CancellationId: Hashable {
+      var id: Int
+    }
+
+    let effects = [1, 2, 3, 4, 5].map { id in
+      Just(id)
+        .delay(for: 1, scheduler: scheduler)
+        .eraseToEffect()
+        .cancellable(id: CancellationId(id: id))
+    }
+
+    Effect<Int, Never>.merge(effects)
+      .sink { values.append($0) }
+      .store(in: &self.cancellables)
+
+    Effect<Int, Never>.merge(
+      .cancel(ids: CancellationId(id: 1), CancellationId(id: 2)),
+      .cancel(ids: [CancellationId(id: 4), CancellationId(id: 5)][...])
+    )
+    .sink { _ in }
+    .store(in: &self.cancellables)
+
+    scheduler.advance(by: 1)
+    XCTAssertEqual(values, [3])
+  }
 }

@@ -33,7 +33,7 @@ import SwiftUI
 /// ```
 ///
 /// If a ``SwitchStore`` does not exhaustively handle every case with a corresponding ``CaseLet``
-/// view, a debug breakpoint will be raised when an unhandled case is encountered. To fall back on a
+/// view, a runtime warning will be logged when an unhandled case is encountered. To fall back on a
 /// default view instead, introduce a ``Default`` view at the end of the ``SwitchStore``:
 ///
 /// ```swift
@@ -47,9 +47,9 @@ import SwiftUI
 /// }
 /// ```
 ///
-/// - See also: ``Reducer/pullback(state:action:environment:breakpointOnNil:file:line:)``, a method
-///   that aids in transforming reducers that operate on each case of an enum into reducers that
-///   operate on the entire enum.
+/// - See also: ``Reducer/pullback(state:action:environment:file:line:)``, a method that aids in
+///   transforming reducers that operate on each case of an enum into reducers that operate on the
+///   entire enum.
 public struct SwitchStore<State, Action, Content>: View where Content: View {
   public let store: Store<State, Action>
   public let content: () -> Content
@@ -80,7 +80,8 @@ where Content: View {
   /// matches a particular case.
   ///
   /// - Parameters:
-  ///   - toLocalState: A case path that can extract a case of switch store state.
+  ///   - toLocalState: A function that can extract a case of switch store state, which can be
+  ///     specified using case path literal syntax, _e.g._ `/State.case`.
   ///   - fromLocalAction: A function that can embed a case action in a switch store action.
   ///   - content: A function that is given a store of the given case's state and returns a view
   ///     that is visible only when the switch store's state matches.
@@ -110,7 +111,8 @@ extension CaseLet where GlobalAction == LocalAction {
   /// matches a particular case.
   ///
   /// - Parameters:
-  ///   - toLocalState: A case path that can extract a case of switch store state.
+  ///   - toLocalState: A function that can extract a case of switch store state, which can be
+  ///     specified using case path literal syntax, _e.g._ `/State.case`.
   ///   - content: A function that is given a store of the given case's state and returns a view
   ///     that is visible only when the switch store's state matches.
   public init(
@@ -1194,13 +1196,22 @@ public struct _ExhaustivityCheckView<State, Action>: View {
       .padding()
       .background(Color.red.edgesIgnoringSafeArea(.all))
       .onAppear {
-        breakpoint(
-          """
-          ---
-          \(message)
-          ---
-          """
-        )
+        #if DEBUG
+          runtimeWarning(
+            """
+            SwitchStore@%@:%d does not handle the current case. …
+
+              Unhandled case:
+                %@
+
+            Make sure that you exhaustively provide a "CaseLet" view for each case in your state, \
+            or provide a "Default" view at the end of the "SwitchStore".
+            """,
+            "\(self.file)",
+            self.line,
+            debugCaseOutput(self.store.wrappedValue.state.value)
+          )
+        #endif
       }
     #else
       return EmptyView()

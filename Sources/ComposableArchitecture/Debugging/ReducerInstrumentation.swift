@@ -82,7 +82,8 @@ extension Publisher where Failure == Never {
         },
         receiveCancel: {
           os_signpost(.end, log: log, name: "Effect", signpostID: sid, "%sCancelled", prefix)
-        })
+        }
+      )
   }
 }
 
@@ -109,7 +110,8 @@ func debugCaseOutput(_ value: Any) -> String {
     }
   }
 
-  return "\(type(of: value))\(debugCaseOutputHelp(value))"
+  return (value as? CustomDebugStringConvertible)?.debugDescription
+    ?? "\(type(of: value))\(debugCaseOutputHelp(value))"
 }
 
 private func isUnlabeledArgument(_ label: String) -> Bool {

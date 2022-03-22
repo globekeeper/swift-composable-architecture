@@ -108,8 +108,8 @@ struct AnimationsView: View {
   let store: Store<AnimationsState, AnimationsAction>
 
   var body: some View {
-    GeometryReader { proxy in
-      WithViewStore(self.store) { viewStore in
+    WithViewStore(self.store) { viewStore in
+      GeometryReader { proxy in
         VStack(alignment: .leading) {
           ZStack(alignment: .center) {
             Text(template: readMe, .body)
@@ -144,9 +144,9 @@ struct AnimationsView: View {
           )
           .padding()
           Button("Rainbow") { viewStore.send(.rainbowButtonTapped, animation: .linear) }
-            .padding([.leading, .trailing, .bottom])
+            .padding([.horizontal, .bottom])
           Button("Reset") { viewStore.send(.resetButtonTapped) }
-            .padding([.leading, .trailing, .bottom])
+            .padding([.horizontal, .bottom])
         }
         .alert(self.store.scope(state: \.alert), dismiss: .dismissAlert)
       }
