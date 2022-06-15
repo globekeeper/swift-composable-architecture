@@ -41,6 +41,7 @@ struct WebSocketEnvironment {
 
 let webSocketReducer = Reducer<WebSocketState, WebSocketAction, WebSocketEnvironment> {
   state, action, environment in
+
   struct WebSocketId: Hashable {}
 
   var receiveSocketMessageEffect: Effect<WebSocketAction, Never> {
@@ -52,8 +53,7 @@ let webSocketReducer = Reducer<WebSocketState, WebSocketAction, WebSocketEnviron
   var sendPingEffect: Effect<WebSocketAction, Never> {
     return environment.webSocket.sendPing(WebSocketId())
       .delay(for: 10, scheduler: environment.mainQueue)
-      .map(WebSocketAction.pingResponse)
-      .eraseToEffect()
+      .eraseToEffect(WebSocketAction.pingResponse)
       .cancellable(id: WebSocketId())
   }
 
@@ -70,11 +70,12 @@ let webSocketReducer = Reducer<WebSocketState, WebSocketAction, WebSocketEnviron
 
     case .disconnected:
       state.connectivityState = .connecting
-      return environment.webSocket.open(WebSocketId(), URL(string: "wss://echo.websocket.org")!, [])
-        .receive(on: environment.mainQueue)
-        .map(WebSocketAction.webSocket)
-        .eraseToEffect()
-        .cancellable(id: WebSocketId())
+      return environment.webSocket.open(
+        WebSocketId(), URL(string: "wss://echo.websocket.events")!, []
+      )
+      .receive(on: environment.mainQueue)
+      .eraseToEffect(WebSocketAction.webSocket)
+      .cancellable(id: WebSocketId())
     }
 
   case let .messageToSendChanged(message):
@@ -104,8 +105,7 @@ let webSocketReducer = Reducer<WebSocketState, WebSocketAction, WebSocketEnviron
 
     return environment.webSocket.send(WebSocketId(), .string(messageToSend))
       .receive(on: environment.mainQueue)
-      .eraseToEffect()
-      .map(WebSocketAction.sendResponse)
+      .eraseToEffect(WebSocketAction.sendResponse)
 
   case let .sendResponse(error):
     if error != nil {
