@@ -70,7 +70,8 @@ private actor AudioRecorder {
           recorder.wrappedValue.stop()
         }
 
-        try AVAudioSession.sharedInstance().setCategory(.record, mode: .default)
+        try AVAudioSession.sharedInstance().setCategory(
+          .playAndRecord, mode: .default, options: .defaultToSpeaker)
         try AVAudioSession.sharedInstance().setActive(true)
         self.recorder?.record()
       } catch {
@@ -78,9 +79,10 @@ private actor AudioRecorder {
       }
     }
 
-    guard let action = try await stream.first(where: { @Sendable _ in true })
-    else { throw CancellationError() }
-    return action
+    for try await didFinish in stream {
+      return didFinish
+    }
+    throw CancellationError()
   }
 }
 

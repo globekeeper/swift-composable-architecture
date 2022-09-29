@@ -13,7 +13,7 @@ final class TodosTests: XCTestCase {
       reducer: appReducer,
       environment: AppEnvironment(
         mainQueue: self.mainQueue.eraseToAnyScheduler(),
-        uuid: { UUID.incrementing() }
+        uuid: UUID.incrementing
       )
     )
 
@@ -26,6 +26,21 @@ final class TodosTests: XCTestCase {
         ),
         at: 0
       )
+    }
+
+    await store.send(.addTodoButtonTapped) {
+      $0.todos = [
+        TodoState(
+          description: "",
+          id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+          isComplete: false
+        ),
+        TodoState(
+          description: "",
+          id: UUID(uuidString: "00000000-0000-0000-0000-000000000000")!,
+          isComplete: false
+        ),
+      ]
     }
   }
 
@@ -44,7 +59,7 @@ final class TodosTests: XCTestCase {
       reducer: appReducer,
       environment: AppEnvironment(
         mainQueue: self.mainQueue.eraseToAnyScheduler(),
-        uuid: { UUID.incrementing() }
+        uuid: UUID.incrementing
       )
     )
 
@@ -75,7 +90,7 @@ final class TodosTests: XCTestCase {
       reducer: appReducer,
       environment: AppEnvironment(
         mainQueue: self.mainQueue.eraseToAnyScheduler(),
-        uuid: { UUID.incrementing() }
+        uuid: UUID.incrementing
       )
     )
 
@@ -111,7 +126,7 @@ final class TodosTests: XCTestCase {
       reducer: appReducer,
       environment: AppEnvironment(
         mainQueue: self.mainQueue.eraseToAnyScheduler(),
-        uuid: { UUID.incrementing() }
+        uuid: UUID.incrementing
       )
     )
 
@@ -146,7 +161,7 @@ final class TodosTests: XCTestCase {
       reducer: appReducer,
       environment: AppEnvironment(
         mainQueue: self.mainQueue.eraseToAnyScheduler(),
-        uuid: { UUID.incrementing() }
+        uuid: UUID.incrementing
       )
     )
 
@@ -182,7 +197,7 @@ final class TodosTests: XCTestCase {
       reducer: appReducer,
       environment: AppEnvironment(
         mainQueue: self.mainQueue.eraseToAnyScheduler(),
-        uuid: { UUID.incrementing() }
+        uuid: UUID.incrementing
       )
     )
 
@@ -219,7 +234,7 @@ final class TodosTests: XCTestCase {
       reducer: appReducer,
       environment: AppEnvironment(
         mainQueue: self.mainQueue.eraseToAnyScheduler(),
-        uuid: { UUID.incrementing() }
+        uuid: UUID.incrementing
       )
     )
 
@@ -248,12 +263,12 @@ final class TodosTests: XCTestCase {
         TodoState(
           description: "",
           id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
-          isComplete: true
+          isComplete: false
         ),
         TodoState(
           description: "",
           id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
-          isComplete: false
+          isComplete: true
         ),
         TodoState(
           description: "",
@@ -267,7 +282,7 @@ final class TodosTests: XCTestCase {
       reducer: appReducer,
       environment: AppEnvironment(
         mainQueue: self.mainQueue.eraseToAnyScheduler(),
-        uuid: { UUID.incrementing() }
+        uuid: UUID.incrementing
       )
     )
 
@@ -277,12 +292,12 @@ final class TodosTests: XCTestCase {
     await store.send(.filterPicked(.completed)) {
       $0.filter = .completed
     }
-    await store.send(.move([0], 1)) {
+    await store.send(.move([0], 2)) {
       $0.todos = [
         $0.todos[0],
-        $0.todos[2],
         $0.todos[1],
         $0.todos[3],
+        $0.todos[2],
       ]
     }
     await self.mainQueue.advance(by: .milliseconds(100))
@@ -309,7 +324,7 @@ final class TodosTests: XCTestCase {
       reducer: appReducer,
       environment: AppEnvironment(
         mainQueue: self.mainQueue.eraseToAnyScheduler(),
-        uuid: { UUID.incrementing() }
+        uuid: UUID.incrementing
       )
     )
 
@@ -324,11 +339,15 @@ final class TodosTests: XCTestCase {
 
 extension UUID {
   // A deterministic, auto-incrementing "UUID" generator for testing.
-  static var incrementing: () -> UUID {
-    var uuid = 0
+  static var incrementing: @Sendable () -> UUID {
+    class UncheckedCount: @unchecked Sendable {
+      var value = 0
+      func increment() { self.value += 1 }
+    }
+    let count = UncheckedCount()
     return {
-      defer { uuid += 1 }
-      return UUID(uuidString: "00000000-0000-0000-0000-\(String(format: "%012x", uuid))")!
+      defer { count.increment() }
+      return UUID(uuidString: "00000000-0000-0000-0000-\(String(format: "%012x", count.value))")!
     }
   }
 }

@@ -128,6 +128,7 @@ public final class Store<State, Action> {
   private var isSending = false
   var parentCancellable: AnyCancellable?
   private let reducer: (inout State, Action) -> Effect<Action, Never>
+  fileprivate var scope: AnyScope?
   var state: CurrentValueSubject<State, Never>
   #if DEBUG
     private let mainThreadChecksEnabled: Bool
@@ -279,7 +280,7 @@ public final class Store<State, Action> {
   /// ```swift
   ///  var body: some View {
   ///    WithViewStore(
-  ///      self.store.scope(state: \.view, action: \.feature)
+  ///      self.store, observe: \.view, send: \.feature
   ///    ) { viewStore in
   ///      ...
   ///    }
@@ -298,29 +299,9 @@ public final class Store<State, Action> {
     action fromChildAction: @escaping (ChildAction) -> Action
   ) -> Store<ChildState, ChildAction> {
     self.threadCheck(status: .scope)
-    var isSending = false
-    let childStore = Store<ChildState, ChildAction>(
-      initialState: toChildState(self.state.value),
-      reducer: .init { childState, childAction, _ in
-        isSending = true
-        defer { isSending = false }
-        let task = self.send(fromChildAction(childAction))
-        childState = toChildState(self.state.value)
-        if let task = task {
-          return .fireAndForget { await task.cancellableValue }
-        } else {
-          return .none
-        }
-      },
-      environment: ()
-    )
-    childStore.parentCancellable = self.state
-      .dropFirst()
-      .sink { [weak childStore] newValue in
-        guard !isSending else { return }
-        childStore?.state.value = toChildState(newValue)
-      }
-    return childStore
+
+    return (self.scope ?? Scope(root: self))
+      .rescope(self, state: toChildState, action: fromChildAction)
   }
 
   /// Scopes the store to one that exposes child state.
@@ -346,66 +327,95 @@ public final class Store<State, Action> {
 
     self.isSending = true
     var currentState = self.state.value
-    defer {
-      self.isSending = false
-      self.state.value = currentState
-    }
-
     let tasks = Box<[Task<Void, Never>]>(wrappedValue: [])
-
-    while !self.bufferedActions.isEmpty {
-      let action = self.bufferedActions.removeFirst()
-      let effect = self.reducer(&currentState, action)
-
-      var didComplete = false
-      let boxedTask = Box<Task<Void, Never>?>(wrappedValue: nil)
-      let uuid = UUID()
-      let effectCancellable =
-        effect
-        .handleEvents(
-          receiveCancel: { [weak self] in
-            self?.threadCheck(status: .effectCompletion(action))
-            self?.effectCancellables[uuid] = nil
-          }
-        )
-        .sink(
-          receiveCompletion: { [weak self] _ in
-            self?.threadCheck(status: .effectCompletion(action))
-            boxedTask.wrappedValue?.cancel()
-            didComplete = true
-            self?.effectCancellables[uuid] = nil
-          },
-          receiveValue: { [weak self] effectAction in
-            guard let self = self else { return }
-            if let task = self.send(effectAction, originatingFrom: action) {
-              tasks.wrappedValue.append(task)
-            }
-          }
-        )
-
-      if !didComplete {
-        let task = Task<Void, Never> { @MainActor in
-          for await _ in AsyncStream<Void>.never {}
-          effectCancellable.cancel()
+    defer {
+      withExtendedLifetime(self.bufferedActions) {
+        self.bufferedActions.removeAll()
+      }
+      self.state.value = currentState
+      self.isSending = false
+      if !self.bufferedActions.isEmpty {
+        if let task = self.send(
+          self.bufferedActions.removeLast(), originatingFrom: originatingAction
+        ) {
+          tasks.wrappedValue.append(task)
         }
-        boxedTask.wrappedValue = task
-        tasks.wrappedValue.append(task)
-        self.effectCancellables[uuid] = effectCancellable
       }
     }
 
+    var index = self.bufferedActions.startIndex
+    while index < self.bufferedActions.endIndex {
+      defer { index += 1 }
+      let action = self.bufferedActions[index]
+      let effect = self.reducer(&currentState, action)
+
+      switch effect.operation {
+      case .none:
+        break
+      case let .publisher(publisher):
+        var didComplete = false
+        let boxedTask = Box<Task<Void, Never>?>(wrappedValue: nil)
+        let uuid = UUID()
+        let effectCancellable =
+          publisher
+          .handleEvents(
+            receiveCancel: { [weak self] in
+              self?.threadCheck(status: .effectCompletion(action))
+              self?.effectCancellables[uuid] = nil
+            }
+          )
+          .sink(
+            receiveCompletion: { [weak self] _ in
+              self?.threadCheck(status: .effectCompletion(action))
+              boxedTask.wrappedValue?.cancel()
+              didComplete = true
+              self?.effectCancellables[uuid] = nil
+            },
+            receiveValue: { [weak self] effectAction in
+              guard let self = self else { return }
+              if let task = self.send(effectAction, originatingFrom: action) {
+                tasks.wrappedValue.append(task)
+              }
+            }
+          )
+
+        if !didComplete {
+          let task = Task<Void, Never> { @MainActor in
+            for await _ in AsyncStream<Void>.never {}
+            effectCancellable.cancel()
+          }
+          boxedTask.wrappedValue = task
+          tasks.wrappedValue.append(task)
+          self.effectCancellables[uuid] = effectCancellable
+        }
+      case let .run(priority, operation):
+        tasks.wrappedValue.append(
+          Task(priority: priority) {
+            await operation(
+              Send {
+                if let task = self.send($0, originatingFrom: action) {
+                  tasks.wrappedValue.append(task)
+                }
+              }
+            )
+          }
+        )
+      }
+    }
+
+    guard !tasks.wrappedValue.isEmpty else { return nil }
     return Task {
       await withTaskCancellationHandler {
         var index = tasks.wrappedValue.startIndex
         while index < tasks.wrappedValue.endIndex {
           defer { index += 1 }
-          tasks.wrappedValue[index].cancel()
+          await tasks.wrappedValue[index].value
         }
-      } operation: {
+      } onCancel: {
         var index = tasks.wrappedValue.startIndex
         while index < tasks.wrappedValue.endIndex {
           defer { index += 1 }
-          await tasks.wrappedValue[index].value
+          tasks.wrappedValue[index].cancel()
         }
       }
     }
@@ -527,5 +537,66 @@ public final class Store<State, Action> {
     #if DEBUG
       self.mainThreadChecksEnabled = mainThreadChecksEnabled
     #endif
+  }
+}
+
+private protocol AnyScope {
+  func rescope<ScopedState, ScopedAction, RescopedState, RescopedAction>(
+    _ store: Store<ScopedState, ScopedAction>,
+    state toRescopedState: @escaping (ScopedState) -> RescopedState,
+    action fromRescopedAction: @escaping (RescopedAction) -> ScopedAction
+  ) -> Store<RescopedState, RescopedAction>
+}
+
+private struct Scope<RootState, RootAction>: AnyScope {
+  let root: Store<RootState, RootAction>
+  let fromScopedAction: Any
+
+  init(root: Store<RootState, RootAction>) {
+    self.init(root: root, fromScopedAction: { $0 })
+  }
+
+  private init<ScopedAction>(
+    root: Store<RootState, RootAction>,
+    fromScopedAction: @escaping (ScopedAction) -> RootAction
+  ) {
+    self.root = root
+    self.fromScopedAction = fromScopedAction
+  }
+
+  func rescope<ScopedState, ScopedAction, RescopedState, RescopedAction>(
+    _ scopedStore: Store<ScopedState, ScopedAction>,
+    state toRescopedState: @escaping (ScopedState) -> RescopedState,
+    action fromRescopedAction: @escaping (RescopedAction) -> ScopedAction
+  ) -> Store<RescopedState, RescopedAction> {
+    let fromScopedAction = self.fromScopedAction as! (ScopedAction) -> RootAction
+
+    var isSending = false
+    let rescopedStore = Store<RescopedState, RescopedAction>(
+      initialState: toRescopedState(scopedStore.state.value),
+      reducer: .init { rescopedState, rescopedAction, _ in
+        isSending = true
+        defer { isSending = false }
+        let task = self.root.send(fromScopedAction(fromRescopedAction(rescopedAction)))
+        rescopedState = toRescopedState(scopedStore.state.value)
+        if let task = task {
+          return .fireAndForget { await task.cancellableValue }
+        } else {
+          return .none
+        }
+      },
+      environment: ()
+    )
+    rescopedStore.parentCancellable = scopedStore.state
+      .dropFirst()
+      .sink { [weak rescopedStore] newValue in
+        guard !isSending else { return }
+        rescopedStore?.state.value = toRescopedState(newValue)
+      }
+    rescopedStore.scope = Scope<RootState, RootAction>(
+      root: self.root,
+      fromScopedAction: { fromScopedAction(fromRescopedAction($0)) }
+    )
+    return rescopedStore
   }
 }

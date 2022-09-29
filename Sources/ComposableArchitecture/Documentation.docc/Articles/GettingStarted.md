@@ -116,9 +116,9 @@ let appReducer = Reducer<
     return .none
 
   case .numberFactButtonTapped:
-    return .task {
+    return .task { [count = state.count] in
       await .numberFactResponse(
-        TaskResult { try await environment.numberFact(state.count) }
+        TaskResult { try await environment.numberFact(count) }
       )
     }
 
@@ -143,7 +143,7 @@ struct AppView: View {
   let store: Store<AppState, AppAction>
 
   var body: some View {
-    WithViewStore(self.store) { viewStore in
+    WithViewStore(self.store, observe: { $0 }) { viewStore in
       VStack {
         HStack {
           Button("−") { viewStore.send(.decrementButtonTapped) }

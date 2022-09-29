@@ -103,13 +103,12 @@ let appReducer = Reducer<AppState, AppAction, AppEnvironment> { state, action, e
     }
   }
 }
-.debug()
 
 struct SpeechRecognitionView: View {
   let store: Store<AppState, AppAction>
 
   var body: some View {
-    WithViewStore(self.store) { viewStore in
+    WithViewStore(self.store, observe: { $0 }) { viewStore in
       VStack {
         VStack(alignment: .leading) {
           Text(readMe)
