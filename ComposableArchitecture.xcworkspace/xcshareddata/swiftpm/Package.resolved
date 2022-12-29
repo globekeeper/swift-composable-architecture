@@ -83,6 +83,15 @@
         }
       },
       {
+        "package": "swiftui-navigation",
+        "repositoryURL": "https://github.com/pointfreeco/swiftui-navigation",
+        "state": {
+          "branch": null,
+          "revision": "46acf5ecc1cabdb28d7fe03289f6c8b13a023f52",
+          "version": "0.4.5"
+        }
+      },
+      {
         "package": "xctest-dynamic-overlay",
         "repositoryURL": "https://github.com/pointfreeco/xctest-dynamic-overlay",
         "state": {
