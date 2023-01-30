@@ -11,7 +11,7 @@ import XCTestDynamicOverlay
     """
     'EffectPublisher' has been deprecated in favor of 'EffectTask'.
 
-     You are encouraged to use `EffectTask<Action>` to model the ouput of your reducers, and to use Swift concurrency to model asynchrony in dependencies.
+     You are encouraged to use `EffectTask<Action>` to model the output of your reducers, and to use Swift concurrency to model asynchrony in dependencies.
 
      See the migration roadmap for more information: https://github.com/pointfreeco/swift-composable-architecture/discussions/1477
     """
@@ -23,7 +23,7 @@ import XCTestDynamicOverlay
     """
     'EffectPublisher' has been deprecated in favor of 'EffectTask'.
 
-     You are encouraged to use `EffectTask<Action>` to model the ouput of your reducers, and to use Swift concurrency to model asynchrony in dependencies.
+     You are encouraged to use `EffectTask<Action>` to model the output of your reducers, and to use Swift concurrency to model asynchrony in dependencies.
 
      See the migration roadmap for more information: https://github.com/pointfreeco/swift-composable-architecture/discussions/1477
     """
@@ -35,7 +35,7 @@ import XCTestDynamicOverlay
     """
     'EffectPublisher' has been deprecated in favor of 'EffectTask'.
 
-     You are encouraged to use `EffectTask<Action>` to model the ouput of your reducers, and to use Swift concurrency to model asynchrony in dependencies.
+     You are encouraged to use `EffectTask<Action>` to model the output of your reducers, and to use Swift concurrency to model asynchrony in dependencies.
 
      See the migration roadmap for more information: https://github.com/pointfreeco/swift-composable-architecture/discussions/1477
     """
@@ -47,7 +47,7 @@ import XCTestDynamicOverlay
     """
     'EffectPublisher' has been deprecated in favor of 'EffectTask'.
 
-     You are encouraged to use `EffectTask<Action>` to model the ouput of your reducers, and to use Swift concurrency to model asynchrony in dependencies.
+     You are encouraged to use `EffectTask<Action>` to model the output of your reducers, and to use Swift concurrency to model asynchrony in dependencies.
 
      See the migration roadmap for more information: https://github.com/pointfreeco/swift-composable-architecture/discussions/1477
     """
@@ -102,17 +102,17 @@ extension EffectPublisher {
 /// the Combine interface to ``EffectPublisher`` is considered soft deprecated, and you should
 /// eventually port to Swift's native concurrency tools.
 ///
-/// > Important: The publisher interface to ``EffectTask`` is considered deperecated, and you should
-/// try converting any uses of that interface to Swift's native concurrency tools.
+/// > Important: The publisher interface to ``EffectTask`` is considered deprecated, and you should
+/// > try converting any uses of that interface to Swift's native concurrency tools.
 /// >
 /// > Also, ``Store`` is not thread safe, and so all effects must receive values on the same
-/// thread. This is typically the main thread,  **and** if the store is being used to drive UI then
-/// it must receive values on the main thread.
+/// > thread. This is typically the main thread,  **and** if the store is being used to drive UI
+/// > then it must receive values on the main thread.
 /// >
 /// > This is only an issue if using the Combine interface of ``EffectPublisher`` as mentioned
-/// above. If  you are using Swift's concurrency tools and the `.task`, `.run` and `.fireAndForget`
-/// functions on ``EffectTask``, then threading is automatically handled for you.
-public typealias EffectTask<Action> = Effect<Action, Never>
+/// > above. If  you are using Swift's concurrency tools and the `.task`, `.run`, and
+/// > `.fireAndForget` functions on ``EffectTask``, then threading is automatically handled for you.
+public typealias EffectTask<Action> = EffectPublisher<Action, Never>
 
 extension EffectPublisher where Failure == Never {
   /// Wraps an asynchronous unit of work in an effect.
@@ -175,39 +175,41 @@ extension EffectPublisher where Failure == Never {
     fileID: StaticString = #fileID,
     line: UInt = #line
   ) -> Self {
-    let dependencies = DependencyValues._current
-    return Self(
-      operation: .run(priority) { send in
-        await DependencyValues.$_current.withValue(dependencies) {
-          do {
-            try await send(operation())
-          } catch is CancellationError {
-            return
-          } catch {
-            guard let handler = handler else {
-              #if DEBUG
-                var errorDump = ""
-                customDump(error, to: &errorDump, indent: 4)
-                runtimeWarn(
-                  """
-                  An "EffectTask.task" returned from "\(fileID):\(line)" threw an unhandled error. …
-
-                  \(errorDump)
-
-                  All non-cancellation errors must be explicitly handled via the "catch" parameter \
-                  on "EffectTask.task", or via a "do" block.
-                  """,
-                  file: file,
-                  line: line
-                )
-              #endif
+    withEscapedDependencies { escaped in
+      Self(
+        operation: .run(priority) { send in
+          await escaped.yield {
+            do {
+              try await send(operation())
+            } catch is CancellationError {
               return
+            } catch {
+              guard let handler = handler else {
+                #if DEBUG
+                  var errorDump = ""
+                  customDump(error, to: &errorDump, indent: 4)
+                  runtimeWarn(
+                    """
+                    An "EffectTask.task" returned from "\(fileID):\(line)" threw an unhandled \
+                    error. …
+
+                    \(errorDump)
+
+                    All non-cancellation errors must be explicitly handled via the "catch" \
+                    parameter on "EffectTask.task", or via a "do" block.
+                    """,
+                    file: file,
+                    line: line
+                  )
+                #endif
+                return
+              }
+              await send(handler(error))
             }
-            await send(handler(error))
           }
         }
-      }
-    )
+      )
+    }
   }
 
   /// Wraps an asynchronous unit of work that can emit any number of times in an effect.
@@ -257,39 +259,40 @@ extension EffectPublisher where Failure == Never {
     fileID: StaticString = #fileID,
     line: UInt = #line
   ) -> Self {
-    let dependencies = DependencyValues._current
-    return Self(
-      operation: .run(priority) { send in
-        await DependencyValues.$_current.withValue(dependencies) {
-          do {
-            try await operation(send)
-          } catch is CancellationError {
-            return
-          } catch {
-            guard let handler = handler else {
-              #if DEBUG
-                var errorDump = ""
-                customDump(error, to: &errorDump, indent: 4)
-                runtimeWarn(
-                  """
-                  An "EffectTask.run" returned from "\(fileID):\(line)" threw an unhandled error. …
-
-                  \(errorDump)
-
-                  All non-cancellation errors must be explicitly handled via the "catch" parameter \
-                  on "EffectTask.run", or via a "do" block.
-                  """,
-                  file: file,
-                  line: line
-                )
-              #endif
+    withEscapedDependencies { escaped in
+      Self(
+        operation: .run(priority) { send in
+          await escaped.yield {
+            do {
+              try await operation(send)
+            } catch is CancellationError {
               return
+            } catch {
+              guard let handler = handler else {
+                #if DEBUG
+                  var errorDump = ""
+                  customDump(error, to: &errorDump, indent: 4)
+                  runtimeWarn(
+                    """
+                    An "EffectTask.run" returned from "\(fileID):\(line)" threw an unhandled error. …
+
+                    \(errorDump)
+
+                    All non-cancellation errors must be explicitly handled via the "catch" parameter \
+                    on "EffectTask.run", or via a "do" block.
+                    """,
+                    file: file,
+                    line: line
+                  )
+                #endif
+                return
+              }
+              await handler(error, send)
             }
-            await handler(error, send)
           }
         }
-      }
-    )
+      )
+    }
   }
 
   /// Creates an effect that executes some work in the real world that doesn't need to feed data
@@ -319,6 +322,34 @@ extension EffectPublisher where Failure == Never {
     _ work: @escaping @Sendable () async throws -> Void
   ) -> Self {
     Self.run(priority: priority) { _ in try? await work() }
+  }
+
+  /// Initializes an effect that immediately emits the action passed in.
+  ///
+  /// > Note: We do not recommend using `Effect.send` to share logic. Instead, limit usage to
+  /// > child-parent communication, where a child may want to emit a "delegate" action for a parent
+  /// > to listen to.
+  /// >
+  /// > For more information, see <doc:Performance#Sharing-logic-with-actions>.
+  ///
+  /// - Parameter action: The action that is immediately emitted by the effect.
+  public static func send(_ action: Action) -> Self {
+    Self(value: action)
+  }
+
+  /// Initializes an effect that immediately emits the action passed in.
+  ///
+  /// > Note: We do not recommend using `Effect.send` to share logic. Instead, limit usage to
+  /// > child-parent communication, where a child may want to emit a "delegate" action for a parent
+  /// > to listen to.
+  /// >
+  /// > For more information, see <doc:Performance#Sharing-logic-with-actions>.
+  ///
+  /// - Parameters:
+  ///   - action: The action that is immediately emitted by the effect.
+  ///   - animation: An animation.
+  public static func send(_ action: Action, animation: Animation? = nil) -> Self {
+    Self(value: action).animation(animation)
   }
 }
 
@@ -372,8 +403,17 @@ public struct Send<Action> {
   ///   - action: An action.
   ///   - animation: An animation.
   public func callAsFunction(_ action: Action, animation: Animation?) {
+    callAsFunction(action, transaction: Transaction(animation: animation))
+  }
+
+  /// Sends an action back into the system from an effect with transaction.
+  ///
+  /// - Parameters:
+  ///   - action: An action.
+  ///   - transaction: A transaction.
+  public func callAsFunction(_ action: Action, transaction: Transaction) {
     guard !Task.isCancelled else { return }
-    withAnimation(animation) {
+    withTransaction(transaction) {
       self(action)
     }
   }
@@ -500,23 +540,35 @@ extension EffectPublisher {
     case .none:
       return .none
     case let .publisher(publisher):
-      let dependencies = DependencyValues._current
-      let transform = { action in
-        DependencyValues.$_current.withValue(dependencies) {
-          transform(action)
-        }
-      }
-      return .init(operation: .publisher(publisher.map(transform).eraseToAnyPublisher()))
-    case let .run(priority, operation):
       return .init(
-        operation: .run(priority) { send in
-          await operation(
-            Send { action in
-              send(transform(action))
-            }
-          )
-        }
+        operation: .publisher(
+          publisher
+            .map(
+              withEscapedDependencies { escaped in
+                { action in
+                  escaped.yield {
+                    transform(action)
+                  }
+                }
+              }
+            )
+            .eraseToAnyPublisher()
+        )
       )
+    case let .run(priority, operation):
+      return withEscapedDependencies { escaped in
+        .init(
+          operation: .run(priority) { send in
+            await escaped.yield {
+              await operation(
+                Send { action in
+                  send(transform(action))
+                }
+              )
+            }
+          }
+        )
+      }
     }
   }
 }
@@ -648,10 +700,11 @@ extension EffectPublisher {
 
 @available(
   *,
+  deprecated,
   message:
     """
     'Effect' has been deprecated in favor of 'EffectTask' when 'Failure == Never', or 'EffectPublisher<Output, Failure>' in general.
-    
+
     You are encouraged to use 'EffectTask<Action>' to model the output of your reducers, and to use Swift concurrency to model failable streams of values.
 
     To find and replace instances of 'Effect<Action, Never>' to 'EffectTask<Action, Never>' in your codebase, use the following regular expression:
