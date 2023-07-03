@@ -47,15 +47,12 @@ day-to-day when building applications, such as:
 
 ### Essentials
 
+- <doc:MeetComposableArchitecture>
 - <doc:GettingStarted>
 - <doc:DependencyManagement>
 - <doc:Testing>
+- <doc:Navigation>
 - <doc:Performance>
-
-### Upgrade guides
-
-- <doc:SwiftConcurrency>
-- <doc:MigratingToTheReducerProtocol>
 
 ### State management
 
@@ -66,13 +63,17 @@ day-to-day when building applications, such as:
 
 ### Integrations
 
-- <doc:SwiftUI>
+- <doc:SwiftUIIntegration>
 - <doc:UIKit>
 
 ### Testing
 
-- <doc:Testing>
 - ``TestStore``
+
+### Upgrade guides
+
+- <doc:SwiftConcurrency>
+- <doc:MigratingToTheReducerProtocol>
 
 ## See Also
 

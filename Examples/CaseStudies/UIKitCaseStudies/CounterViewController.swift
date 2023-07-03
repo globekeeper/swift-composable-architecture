@@ -31,7 +31,7 @@ final class CounterViewController: UIViewController {
   private var cancellables: Set<AnyCancellable> = []
 
   init(store: StoreOf<Counter>) {
-    self.viewStore = ViewStore(store)
+    self.viewStore = ViewStore(store, observe: { $0 })
     super.init(nibName: nil, bundle: nil)
   }
 
@@ -86,10 +86,9 @@ final class CounterViewController: UIViewController {
 struct CounterViewController_Previews: PreviewProvider {
   static var previews: some View {
     let vc = CounterViewController(
-      store: Store(
-        initialState: Counter.State(),
-        reducer: Counter()
-      )
+      store: Store(initialState: Counter.State()) {
+        Counter()
+      }
     )
     return UIViewRepresented(makeUIView: { _ in vc.view })
   }

@@ -1,9 +1,10 @@
 import Combine
 import ComposableArchitecture
+@_spi(Concurrency) import Dependencies
 import XCTest
 
 @MainActor
-final class ViewStoreTests: XCTestCase {
+final class ViewStoreTests: BaseTCATestCase {
   var cancellables: Set<AnyCancellable> = []
 
   override func setUp() {
@@ -13,11 +14,7 @@ final class ViewStoreTests: XCTestCase {
   }
 
   func testPublisherFirehose() {
-    let store = Store(
-      initialState: 0,
-      reducer: EmptyReducer<Int, Void>()
-    )
-
+    let store = Store<Int, Void>(initialState: 0) {}
     let viewStore = ViewStore(store, observe: { $0 })
 
     var emissionCount = 0
@@ -35,15 +32,12 @@ final class ViewStoreTests: XCTestCase {
   }
 
   func testEqualityChecks() {
-    let store = Store(
-      initialState: State(),
-      reducer: EmptyReducer<State, Void>()
-    )
+    let store = Store<State, Void>(initialState: State()) {}
 
-    let store1 = store.scope(state: { $0 })
-    let store2 = store1.scope(state: { $0 })
-    let store3 = store2.scope(state: { $0 })
-    let store4 = store3.scope(state: { $0 })
+    let store1 = store.scope(state: { $0 }, action: { $0 })
+    let store2 = store1.scope(state: { $0 }, action: { $0 })
+    let store3 = store2.scope(state: { $0 }, action: { $0 })
+    let store4 = store3.scope(state: { $0 }, action: { $0 })
 
     let viewStore1 = ViewStore(store1)
     let viewStore2 = ViewStore(store2)
@@ -81,7 +75,7 @@ final class ViewStoreTests: XCTestCase {
       return .none
     }
 
-    let store = Store(initialState: 0, reducer: reducer)
+    let store = Store(initialState: 0) { reducer }
     let viewStore = ViewStore(store, observe: { $0 })
 
     var results: [Int] = []
@@ -103,7 +97,7 @@ final class ViewStoreTests: XCTestCase {
       return .none
     }
 
-    let store = Store(initialState: 0, reducer: reducer)
+    let store = Store(initialState: 0) { reducer }
     let viewStore = ViewStore(store, observe: { $0 })
 
     var results: [Int] = []
@@ -124,7 +118,7 @@ final class ViewStoreTests: XCTestCase {
       count += 1
       return .none
     }
-    let store = Store(initialState: 0, reducer: reducer)
+    let store = Store(initialState: 0) { reducer }
 
     var results: [Int] = []
     ViewStore(store, observe: { $0 })
@@ -141,7 +135,7 @@ final class ViewStoreTests: XCTestCase {
       count += 1
       return .none
     }
-    let store = Store(initialState: 0, reducer: reducer)
+    let store = Store(initialState: 0) { reducer }
     let viewStore = ViewStore(store, observe: { $0 })
 
     var results: [Int] = []
@@ -168,27 +162,29 @@ final class ViewStoreTests: XCTestCase {
   }
 
   func testSendWhile() async {
-    enum Action {
-      case response
-      case tapped
-    }
-    let reducer = Reduce<Bool, Action> { state, action in
-      switch action {
-      case .response:
-        state = false
-        return .none
-      case .tapped:
-        state = true
-        return .task { .response }
+    await withMainSerialExecutor {
+      enum Action {
+        case response
+        case tapped
       }
+      let reducer = Reduce<Bool, Action> { state, action in
+        switch action {
+        case .response:
+          state = false
+          return .none
+        case .tapped:
+          state = true
+          return .task { .response }
+        }
+      }
+
+      let store = Store(initialState: false) { reducer }
+      let viewStore = ViewStore(store, observe: { $0 })
+
+      XCTAssertEqual(viewStore.state, false)
+      await viewStore.send(.tapped, while: { $0 })
+      XCTAssertEqual(viewStore.state, false)
     }
-
-    let store = Store(initialState: false, reducer: reducer)
-    let viewStore = ViewStore(store, observe: { $0 })
-
-    XCTAssertEqual(viewStore.state, false)
-    await viewStore.send(.tapped, while: { $0 })
-    XCTAssertEqual(viewStore.state, false)
   }
 
   func testSuspend() {
@@ -209,7 +205,7 @@ final class ViewStoreTests: XCTestCase {
         }
       }
 
-      let store = Store(initialState: false, reducer: reducer)
+      let store = Store(initialState: false) { reducer }
       let viewStore = ViewStore(store, observe: { $0 })
 
       XCTAssertEqual(viewStore.state, false)
@@ -227,9 +223,8 @@ final class ViewStoreTests: XCTestCase {
       case tap
       case response(Int)
     }
-    let store = Store(
-      initialState: 0,
-      reducer: Reduce<Int, Action> { state, action in
+    let store = Store(initialState: 0) {
+      Reduce<Int, Action> { state, action in
         switch action {
         case .tap:
           return .task {
@@ -240,7 +235,7 @@ final class ViewStoreTests: XCTestCase {
           return .none
         }
       }
-    )
+    }
 
     let viewStore = ViewStore(store, observe: { $0 })
 
@@ -254,9 +249,8 @@ final class ViewStoreTests: XCTestCase {
       case tap
       case response(Int)
     }
-    let store = Store(
-      initialState: 0,
-      reducer: Reduce<Int, Action> { state, action in
+    let store = Store(initialState: 0) {
+      Reduce<Int, Action> { state, action in
         switch action {
         case .tap:
           return .task {
@@ -268,7 +262,7 @@ final class ViewStoreTests: XCTestCase {
           return .none
         }
       }
-    )
+    }
 
     let viewStore = ViewStore(store, observe: { $0 })
 

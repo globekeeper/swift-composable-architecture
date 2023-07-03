@@ -26,14 +26,21 @@ extension ReducerProtocol {
   /// }
   /// ```
   ///
-  /// The `ifLet` forces a specific order of operations for the child and parent features. It runs
-  /// the child first, and then the parent. If the order was reversed, then it would be possible for
-  /// the parent feature to `nil` out the child state, in which case the child feature would not be
-  /// able to react to that action. That can cause subtle bugs.
+  /// The `ifLet` operator does a number of things to try to enforce correctness:
   ///
-  /// It is still possible for a parent feature higher up in the application to `nil` out child
-  /// state before the child has a chance to react to the action. In such cases a runtime warning
-  /// is shown in Xcode to let you know that there's a potential problem.
+  ///   * It forces a specific order of operations for the child and parent features. It runs the
+  ///     child first, and then the parent. If the order was reversed, then it would be possible for
+  ///     the parent feature to `nil` out the child state, in which case the child feature would not
+  ///     be able to react to that action. That can cause subtle bugs.
+  ///
+  ///   * It automatically cancels all child effects when it detects the child's state is `nil`'d
+  ///     out.
+  ///
+  ///   * Automatically `nil`s out child state when an action is sent for alerts and confirmation
+  ///     dialogs.
+  ///
+  /// See ``ReducerProtocol/ifLet(_:action:destination:fileID:line:)`` for a more advanced operator
+  /// suited to navigation.
   ///
   /// - Parameters:
   ///   - toWrappedState: A writable key path from parent state to a property containing optional
@@ -43,11 +50,11 @@ extension ReducerProtocol {
   ///     state.
   /// - Returns: A reducer that combines the child reducer with the parent reducer.
   @inlinable
+  @warn_unqualified_access
   public func ifLet<WrappedState, WrappedAction, Wrapped: ReducerProtocol>(
     _ toWrappedState: WritableKeyPath<State, WrappedState?>,
     action toWrappedAction: CasePath<Action, WrappedAction>,
     @ReducerBuilder<WrappedState, WrappedAction> then wrapped: () -> Wrapped,
-    file: StaticString = #file,
     fileID: StaticString = #fileID,
     line: UInt = #line
   ) -> _IfLetReducer<Self, Wrapped>
@@ -57,7 +64,24 @@ extension ReducerProtocol {
       child: wrapped(),
       toChildState: toWrappedState,
       toChildAction: toWrappedAction,
-      file: file,
+      fileID: fileID,
+      line: line
+    )
+  }
+
+  @inlinable
+  @warn_unqualified_access
+  public func ifLet<WrappedState: _EphemeralState, WrappedAction>(
+    _ toWrappedState: WritableKeyPath<State, WrappedState?>,
+    action toWrappedAction: CasePath<Action, WrappedAction>,
+    fileID: StaticString = #fileID,
+    line: UInt = #line
+  ) -> _IfLetReducer<Self, EmptyReducer<WrappedState, WrappedAction>> {
+    .init(
+      parent: self,
+      child: EmptyReducer(),
+      toChildState: toWrappedState,
+      toChildAction: toWrappedAction,
       fileID: fileID,
       line: line
     )
@@ -78,13 +102,12 @@ public struct _IfLetReducer<Parent: ReducerProtocol, Child: ReducerProtocol>: Re
   let toChildAction: CasePath<Parent.Action, Child.Action>
 
   @usableFromInline
-  let file: StaticString
-
-  @usableFromInline
   let fileID: StaticString
 
   @usableFromInline
   let line: UInt
+
+  @Dependency(\.navigationIDPath) var navigationIDPath
 
   @usableFromInline
   init(
@@ -92,7 +115,6 @@ public struct _IfLetReducer<Parent: ReducerProtocol, Child: ReducerProtocol>: Re
     child: Child,
     toChildState: WritableKeyPath<Parent.State, Child.State?>,
     toChildAction: CasePath<Parent.Action, Child.Action>,
-    file: StaticString,
     fileID: StaticString,
     line: UInt
   ) {
@@ -100,39 +122,66 @@ public struct _IfLetReducer<Parent: ReducerProtocol, Child: ReducerProtocol>: Re
     self.child = child
     self.toChildState = toChildState
     self.toChildAction = toChildAction
-    self.file = file
     self.fileID = fileID
     self.line = line
   }
 
-  @inlinable
   public func reduce(
     into state: inout Parent.State, action: Parent.Action
   ) -> EffectTask<Parent.Action> {
-    self.reduceChild(into: &state, action: action)
-      .merge(with: self.parent.reduce(into: &state, action: action))
+    let childEffects = self.reduceChild(into: &state, action: action)
+
+    let childIDBefore = state[keyPath: self.toChildState].map {
+      NavigationID(base: $0, keyPath: self.toChildState)
+    }
+    let parentEffects = self.parent.reduce(into: &state, action: action)
+    let childIDAfter = state[keyPath: self.toChildState].map {
+      NavigationID(base: $0, keyPath: self.toChildState)
+    }
+
+    if childIDAfter == childIDBefore,
+      self.toChildAction.extract(from: action) != nil,
+      let childState = state[keyPath: self.toChildState],
+      isEphemeral(childState)
+    {
+      state[keyPath: toChildState] = nil
+    }
+
+    let childCancelEffects: EffectTask<Parent.Action>
+    if let childID = childIDBefore, childID != childIDAfter {
+      childCancelEffects = ._cancel(id: childID, navigationID: self.navigationIDPath)
+    } else {
+      childCancelEffects = .none
+    }
+
+    return .merge(
+      childEffects,
+      parentEffects,
+      childCancelEffects
+    )
   }
 
-  @inlinable
   func reduceChild(
     into state: inout Parent.State, action: Parent.Action
   ) -> EffectTask<Parent.Action> {
     guard let childAction = self.toChildAction.extract(from: action)
     else { return .none }
     guard state[keyPath: self.toChildState] != nil else {
+      var actionDump = ""
+      customDump(action, to: &actionDump, indent: 4)
       runtimeWarn(
         """
         An "ifLet" at "\(self.fileID):\(self.line)" received a child action when child state was \
         "nil". …
 
           Action:
-            \(debugCaseOutput(action))
+        \(actionDump)
 
         This is generally considered an application logic error, and can happen for a few reasons:
 
-        • A parent reducer set child state to "nil" before this reducer ran. This reducer must \
-        run before any other reducer sets child state to "nil". This ensures that child reducers \
-        can handle their actions while their state is still available.
+        • A parent reducer set child state to "nil" before this reducer ran. This reducer must run \
+        before any other reducer sets child state to "nil". This ensures that child reducers can \
+        handle their actions while their state is still available.
 
         • An in-flight effect emitted this action when child state was "nil". While it may be \
         perfectly reasonable to ignore this action, consider canceling the associated effect \
@@ -141,13 +190,16 @@ public struct _IfLetReducer<Parent: ReducerProtocol, Child: ReducerProtocol>: Re
         • This action was sent to the store while state was "nil". Make sure that actions for this \
         reducer can only be sent from a view store when state is non-"nil". In SwiftUI \
         applications, use "IfLetStore".
-        """,
-        file: self.file,
-        line: self.line
+        """
       )
       return .none
     }
-    return self.child.reduce(into: &state[keyPath: self.toChildState]!, action: childAction)
-      .map(self.toChildAction.embed)
+    let navigationID = NavigationID(
+      base: state[keyPath: self.toChildState]!, keyPath: self.toChildState)
+    return self.child
+      .dependency(\.navigationIDPath, self.navigationIDPath.appending(navigationID))
+      .reduce(into: &state[keyPath: self.toChildState]!, action: childAction)
+      .map { self.toChildAction.embed($0) }
+      ._cancellable(id: navigationID, navigationIDPath: self.navigationIDPath)
   }
 }

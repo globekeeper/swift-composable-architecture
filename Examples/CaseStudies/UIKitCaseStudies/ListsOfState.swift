@@ -29,7 +29,7 @@ final class CountersTableViewController: UITableViewController {
 
   init(store: StoreOf<CounterList>) {
     self.store = store
-    self.viewStore = ViewStore(store)
+    self.viewStore = ViewStore(store, observe: { $0 })
     super.init(nibName: nil, bundle: nil)
   }
 
@@ -88,9 +88,10 @@ struct CountersTableViewController_Previews: PreviewProvider {
               Counter.State(),
               Counter.State(),
             ]
-          ),
-          reducer: CounterList()
-        )
+          )
+        ) {
+          CounterList()
+        }
       )
     )
     return UIViewRepresented(makeUIView: { _ in vc.view })

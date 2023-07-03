@@ -76,6 +76,7 @@ the Composable Architecture. Check out [this](./Examples) directory to see them 
 * [Motion manager](https://github.com/pointfreeco/composable-core-motion/tree/main/Examples/MotionManager)
 * [Search](./Examples/Search)
 * [Speech Recognition](./Examples/SpeechRecognition)
+* [Standups app](./Examples/Standups)
 * [Tic-Tac-Toe](./Examples/TicTacToe)
 * [Todos](./Examples/Todos)
 * [Voice memos](./Examples/VoiceMemos)
@@ -84,6 +85,10 @@ Looking for something more substantial? Check out the source code for [isowords]
 iOS word search game built in SwiftUI and the Composable Architecture.
 
 ## Basic Usage
+
+> **Note**
+> For a step-by-step interactive tutorial, be sure to check out [Meet the Composable
+> Architecture][meet-tca].
 
 To build a feature using the Composable Architecture you define some types and values that model 
 your domain:
@@ -137,13 +142,13 @@ when we receive a response from the fact API request:
 
 ```swift
 struct Feature: ReducerProtocol {
-  struct State: Equatable { … }
+  struct State: Equatable { /* ... */ }
   enum Action: Equatable {
     case factAlertDismissed
     case decrementButtonTapped
     case incrementButtonTapped
     case numberFactButtonTapped
-    case numberFactResponse(TaskResult<String>)
+    case numberFactResponse(String)
   }
 }
 ```
@@ -155,43 +160,36 @@ can return `.none` to represent that:
 
 ```swift
 struct Feature: ReducerProtocol {
-  struct State: Equatable { … }
-  enum Action: Equatable { … }
+  struct State: Equatable { /* ... */ }
+  enum Action: Equatable { /* ... */ }
   
   func reduce(into state: inout State, action: Action) -> EffectTask<Action> {
     switch action {
-      case .factAlertDismissed:
-        state.numberFactAlert = nil
-        return .none
+    case .factAlertDismissed:
+      state.numberFactAlert = nil
+      return .none
 
-      case .decrementButtonTapped:
-        state.count -= 1
-        return .none
+    case .decrementButtonTapped:
+      state.count -= 1
+      return .none
 
-      case .incrementButtonTapped:
-        state.count += 1
-        return .none
+    case .incrementButtonTapped:
+      state.count += 1
+      return .none
 
-      case .numberFactButtonTapped:
-        return .task { [count = state.count] in
-          await .numberFactResponse(
-            TaskResult {
-              String(
-                decoding: try await URLSession.shared
-                  .data(from: URL(string: "http://numbersapi.com/\(count)/trivia")!).0,
-                as: UTF8.self
-              )
-            }
-          )
-        }
+    case .numberFactButtonTapped:
+      return .run { [count = state.count] send in
+        let (data, _) = try await URLSession.shared.data(
+          from: URL(string: "http://numbersapi.com/\(count)/trivia")!
+        )
+        await send(
+          .numberFactResponse(String(decoding: data, as: UTF8.self))
+        )
+      }
 
-      case let .numberFactResponse(.success(fact)):
-        state.numberFactAlert = fact
-        return .none
-
-      case .numberFactResponse(.failure):
-        state.numberFactAlert = "Could not load a number fact :("
-        return .none
+    case let .numberFactResponse(fact):
+      state.numberFactAlert = fact
+      return .none
     }
   }
 }
@@ -247,7 +245,7 @@ SwiftUI version, so we have collapsed it here:
     var cancellables: Set<AnyCancellable> = []
 
     init(store: StoreOf<Feature>) {
-      self.viewStore = ViewStore(store)
+      self.viewStore = ViewStore(store, observe: { $0 })
       super.init(nibName: nil, bundle: nil)
     }
 
@@ -312,10 +310,9 @@ struct MyApp: App {
   var body: some Scene {
     WindowGroup {
       FeatureView(
-        store: Store(
-          initialState: Feature.State(),
-          reducer: Feature()
-        )
+        store: Store(initialState: Feature.State()) {
+          Feature()
+        }
       )
     }
   }
@@ -339,10 +336,9 @@ does extra work to allow you to assert how your feature evolves as actions are s
 ```swift
 @MainActor
 func testFeature() async {
-  let store = TestStore(
-    initialState: Feature.State(),
-    reducer: Feature()
-  )
+  let store = TestStore(initialState: Feature.State()) {
+    Feature()
+  }
 }
 ```
 
@@ -367,7 +363,7 @@ receive a fact response back with the fact, which then causes the alert to show:
 ```swift
 await store.send(.numberFactButtonTapped)
 
-await store.receive(.numberFactResponse(.success(???))) {
+await store.receive(.numberFactResponse(???)) {
   $0.numberFactAlert = ???
 }
 ```
@@ -385,7 +381,7 @@ do this by adding a property to the `Feature` reducer:
 ```swift
 struct Feature: ReducerProtocol {
   let numberFact: (Int) async throws -> String
-  …
+  // ...
 }
 ```
 
@@ -393,8 +389,9 @@ Then we can use it in the `reduce` implementation:
 
 ```swift
 case .numberFactButtonTapped:
-  return .task { [count = state.count] in 
-    await .numberFactResponse(TaskResult { try await self.numberFact(count) })
+  return .run { [count = state.count] send in 
+    let fact = try await self.numberFact(count)
+    await send(.numberFactResponse(fact))
   }
 ```
 
@@ -406,16 +403,16 @@ interacts with the real world API server:
 struct MyApp: App {
   var body: some Scene {
     FeatureView(
-      store: Store(
-        initialState: Feature.State(),
-        reducer: Feature(
+      store: Store(initialState: Feature.State()) {
+        Feature(
           numberFact: { number in
-            let (data, _) = try await URLSession.shared
-              .data(from: .init(string: "http://numbersapi.com/\(number)")!)
+            let (data, _) = try await URLSession.shared.data(
+              from: URL(string: "http://numbersapi.com/\(number)")!
+            )
             return String(decoding: data, as: UTF8.self)
           }
         )
-      )
+      }
     )
   }
 }
@@ -427,12 +424,9 @@ fact:
 ```swift
 @MainActor
 func testFeature() async {
-  let store = TestStore(
-    initialState: Feature.State(),
-    reducer: Feature(
-      numberFact: { "\($0) is a good number Brent" }
-    )
-  )
+  let store = TestStore(initialState: Feature.State()) {
+    Feature(numberFact: { "\($0) is a good number Brent" })
+  }
 }
 ```
 
@@ -443,7 +437,7 @@ the alert:
 ```swift
 await store.send(.numberFactButtonTapped)
 
-await store.receive(.numberFactResponse(.success("0 is a good number Brent"))) {
+await store.receive(.numberFactResponse("0 is a good number Brent")) {
   $0.numberFactAlert = "0 is a good number Brent"
 }
 
@@ -477,7 +471,8 @@ extension NumberFactClient: DependencyKey {
   static let liveValue = Self(
     fetch: { number in
       let (data, _) = try await URLSession.shared
-        .data(from: .init(string: "http://numbersapi.com/\(number)")!)
+        .data(from: URL(string: "http://numbersapi.com/\(number)")!
+      )
       return String(decoding: data, as: UTF8.self)
     }
   )
@@ -492,15 +487,18 @@ extension DependencyValues {
 ```
 
 With that little bit of upfront work done you can instantly start making use of the dependency in 
-any feature:
+any feature by using the `@Dependency` property wrapper:
 
-```swift
-struct Feature: ReducerProtocol {
-  struct State { … }
-  enum Action { … }
-  @Dependency(\.numberFact) var numberFact
-  …
-}
+```diff
+ struct Feature: ReducerProtocol {
+-  let numberFact: (Int) async throws -> String
++  @Dependency(\.numberFact) var numberFact
+   
+   …
+
+-  try await self.numberFact(count)
++  try await self.numberFact.fetch(count)
+ }
 ```
 
 This code works exactly as it did before, but you no longer have to explicitly pass the dependency 
@@ -515,10 +513,9 @@ This means the entry point to the application no longer needs to construct depen
 struct MyApp: App {
   var body: some Scene {
     FeatureView(
-      store: Store(
-        initialState: Feature.State(),
-        reducer: Feature()
-      )
+      store: Store(initialState: Feature.State()) {
+        Feature()
+      }
     )
   }
 }
@@ -528,14 +525,13 @@ And the test store can be constructed without specifying any dependencies, but y
 override any dependency you need to for the purpose of the test:
 
 ```swift
-let store = TestStore(
-  initialState: Feature.State(),
-  reducer: Feature()
-) {
+let store = TestStore(initialState: Feature.State()) {
+  Feature()
+} withDependencies: {
   $0.numberFact.fetch = { "\($0) is a good number Brent" }
 }
 
-…
+// ...
 ```
 
 That is the basics of building and testing a feature in the Composable Architecture. There are 
@@ -548,13 +544,16 @@ advanced usages.
 The documentation for releases and `main` are available here:
 
 * [`main`](https://pointfreeco.github.io/swift-composable-architecture/main/documentation/composablearchitecture)
-* [0.50.0](https://pointfreeco.github.io/swift-composable-architecture/0.50.0/documentation/composablearchitecture/)
+* [0.54.0](https://pointfreeco.github.io/swift-composable-architecture/0.54.0/documentation/composablearchitecture/)
 
 <details>
   <summary>
   Other versions
   </summary>
 
+  * [0.53.0](https://pointfreeco.github.io/swift-composable-architecture/0.53.0/documentation/composablearchitecture/)
+  * [0.52.0](https://pointfreeco.github.io/swift-composable-architecture/0.52.0/documentation/composablearchitecture/)
+  * [0.50.0](https://pointfreeco.github.io/swift-composable-architecture/0.50.0/documentation/composablearchitecture/)
   * [0.49.0](https://pointfreeco.github.io/swift-composable-architecture/0.49.0/documentation/composablearchitecture/)
   * [0.48.0](https://pointfreeco.github.io/swift-composable-architecture/0.48.0/documentation/composablearchitecture/)
   * [0.47.0](https://pointfreeco.github.io/swift-composable-architecture/0.47.0/documentation/composablearchitecture/)
@@ -614,13 +613,17 @@ The following translations of this README have been contributed by members of th
 
 * [Arabic](https://gist.github.com/NorhanBoghdadi/1b98d55c02b683ddef7e05c2ebcccd47)
 * [French](https://gist.github.com/nikitamounier/0e93eb832cf389db12f9a69da030a2dc)
+* [Hindi](https://gist.github.com/akashsoni01/b358ee0b3b747167964ef6946123c88d)
 * [Indonesian](https://gist.github.com/wendyliga/792ea9ac5cc887f59de70a9e39cc7343)
 * [Italian](https://gist.github.com/Bellaposa/5114e6d4d55fdb1388e8186886d48958)
 * [Japanese](https://gist.github.com/kalupas226/bdf577e4a7066377ea0a8aaeebcad428)
 * [Korean](https://gist.github.com/pilgwon/ea05e2207ab68bdd1f49dff97b293b17)
+* [Polish](https://gist.github.com/MarcelStarczyk/6b6153051f46912a665c32199f0d1d54)
 * [Portuguese](https://gist.github.com/SevioCorrea/2bbf337cd084a58c89f2f7f370626dc8)
+* [Russian](https://gist.github.com/artyom-ivanov/ed0417fd1f008f0492d3431c033175df)
 * [Simplified Chinese](https://gist.github.com/sh3l6orrr/10c8f7c634a892a9c37214f3211242ad)
 * [Spanish](https://gist.github.com/pitt500/f5e32fccb575ce112ffea2827c7bf942)
+* [Ukrainian](https://gist.github.com/barabashd/33b64676195ce41f4bb73c327ea512a8)
 
 If you'd like to contribute a translation, please [open a
 PR](https://github.com/pointfreeco/swift-composable-architecture/edit/main/README.md) with a link 
@@ -711,3 +714,4 @@ This library is released under the MIT license. See [LICENSE](LICENSE) for detai
 [concurrency-article]: https://pointfreeco.github.io/swift-composable-architecture/main/documentation/composablearchitecture/swiftconcurrency
 [bindings-article]: https://pointfreeco.github.io/swift-composable-architecture/main/documentation/composablearchitecture/bindings
 [migrating-article]: https://pointfreeco.github.io/swift-composable-architecture/main/documentation/composablearchitecture/migratingtothereducerprotocol
+[meet-tca]: https://pointfreeco.github.io/swift-composable-architecture/main/tutorials/meetcomposablearchitecture

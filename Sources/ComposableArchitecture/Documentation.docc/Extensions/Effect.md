@@ -5,10 +5,9 @@
 ### Creating an effect
 
 - ``EffectPublisher/none``
-- ``EffectPublisher/task(priority:operation:catch:file:fileID:line:)``
-- ``EffectPublisher/run(priority:operation:catch:file:fileID:line:)``
-- ``EffectPublisher/fireAndForget(priority:_:)``
+- ``EffectPublisher/run(priority:operation:catch:fileID:line:)``
 - ``EffectPublisher/send(_:)``
+- ``EffectOf``
 - ``TaskResult``
 
 ### Cancellation
@@ -24,13 +23,13 @@
 - ``EffectPublisher/merge(_:)-45guh``
 - ``EffectPublisher/merge(_:)-3d54p``
 
-### Concurrency
-
-- ``UncheckedSendable``
-
 ### Testing
 
 - ``EffectPublisher/unimplemented(_:)``
+
+### Combine integration
+
+- ``EffectPublisher/publisher(_:)``
 
 ### SwiftUI integration
 

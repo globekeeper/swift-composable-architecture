@@ -1,4 +1,5 @@
 import ComposableArchitecture
+@_spi(Concurrency) import Dependencies
 import XCTest
 
 @testable import SwiftUICaseStudies
@@ -6,10 +7,9 @@ import XCTest
 @MainActor
 final class EffectsCancellationTests: XCTestCase {
   func testTrivia_SuccessfulRequest() async {
-    let store = TestStore(
-      initialState: EffectsCancellation.State(),
-      reducer: EffectsCancellation()
-    ) {
+    let store = TestStore(initialState: EffectsCancellation.State()) {
+      EffectsCancellation()
+    } withDependencies: {
       $0.factClient.fetch = { "\($0) is a good number Brent" }
     }
 
@@ -30,10 +30,9 @@ final class EffectsCancellationTests: XCTestCase {
 
   func testTrivia_FailedRequest() async {
     struct FactError: Equatable, Error {}
-    let store = TestStore(
-      initialState: EffectsCancellation.State(),
-      reducer: EffectsCancellation()
-    ) {
+    let store = TestStore(initialState: EffectsCancellation.State()) {
+      EffectsCancellation()
+    } withDependencies: {
       $0.factClient.fetch = { _ in throw FactError() }
     }
 
@@ -52,10 +51,9 @@ final class EffectsCancellationTests: XCTestCase {
   // test to fail, showing that we are exhaustively asserting that the effect truly is canceled and
   // will never emit.
   func testTrivia_CancelButtonCancelsRequest() async {
-    let store = TestStore(
-      initialState: EffectsCancellation.State(),
-      reducer: EffectsCancellation()
-    ) {
+    let store = TestStore(initialState: EffectsCancellation.State()) {
+      EffectsCancellation()
+    } withDependencies: {
       $0.factClient.fetch = {
         try await Task.sleep(nanoseconds: NSEC_PER_SEC)
         return "\($0) is a good number Brent"
@@ -71,22 +69,20 @@ final class EffectsCancellationTests: XCTestCase {
   }
 
   func testTrivia_PlusMinusButtonsCancelsRequest() async {
-    let store = TestStore(
-      initialState: EffectsCancellation.State(),
-      reducer: EffectsCancellation()
-    ) {
-      $0.factClient.fetch = {
-        try await Task.sleep(nanoseconds: NSEC_PER_SEC)
-        return "\($0) is a good number Brent"
+    await withMainSerialExecutor {
+      let store = TestStore(initialState: EffectsCancellation.State()) {
+        EffectsCancellation()
+      } withDependencies: {
+        $0.factClient.fetch = { _ in try await Task.never() }
       }
-    }
 
-    await store.send(.factButtonTapped) {
-      $0.isFactRequestInFlight = true
-    }
-    await store.send(.stepperChanged(1)) {
-      $0.count = 1
-      $0.isFactRequestInFlight = false
+      await store.send(.factButtonTapped) {
+        $0.isFactRequestInFlight = true
+      }
+      await store.send(.stepperChanged(1)) {
+        $0.count = 1
+        $0.isFactRequestInFlight = false
+      }
     }
   }
 }
